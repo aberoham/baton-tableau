@@ -4,11 +4,10 @@ package lambda
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/schemas"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Invokes a Lambda function. You can invoke a function synchronously (and wait
@@ -16,6 +15,9 @@ import (
 // synchronously (i.e. the InvocationType is RequestResponse ). To invoke a
 // function asynchronously, set InvocationType to Event . Lambda passes the
 // ClientContext object to your function for synchronous invocations only.
+//
+// For synchronous invocations, the maximum payload size is 6 MB. For asynchronous
+// invocations, the maximum payload size is 1 MB.
 //
 // For [synchronous invocation], details about the function response, including errors, are included in
 // the response body and headers. For either invocation type, you can find more
@@ -96,6 +98,17 @@ type InvokeInput struct {
 	// your function for synchronous invocations only.
 	ClientContext *string
 
+	// A unique name for the durable execution. If you invoke a durable function using
+	// a name that already exists with the same payload, Lambda returns the existing
+	// execution instead of creating a duplicate. If the payload differs, Lambda
+	// returns a DurableExecutionAlreadyStartedException error.
+	//
+	// If not specified, Lambda generates a unique identifier automatically. For more
+	// information, see [Execution names].
+	//
+	// [Execution names]: https://docs.aws.amazon.com/lambda/latest/dg/durable-execution-idempotency.html#durable-idempotency-execution-names
+	DurableExecutionName *string
+
 	// Choose from the following options.
 	//
 	//   - RequestResponse (default) – Invoke the function synchronously. Keep the
@@ -114,7 +127,9 @@ type InvokeInput struct {
 	// synchronously invoked functions only.
 	LogType types.LogType
 
-	// The JSON that you want to provide to your Lambda function as input.
+	// The JSON that you want to provide to your Lambda function as input. The maximum
+	// payload size is 6 MB for synchronous invocations and 1 MB for asynchronous
+	// invocations.
 	//
 	// You can enter the JSON directly. For example, --payload '{ "key": "value" }' .
 	// You can also specify a file path. For example, --payload file://payload.json .
@@ -123,10 +138,51 @@ type InvokeInput struct {
 	// Specify a version or alias to invoke a published version of the function.
 	Qualifier *string
 
+	// The identifier of the tenant in a multi-tenant Lambda function.
+	TenantId *string
+
 	noSmithyDocumentSerde
 }
 
+func (v *InvokeInput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.InvocationRequest)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *InvokeInput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.ClientContext != nil {
+		s.WriteString(schemas.InvocationRequest_ClientContext, *v.ClientContext)
+	}
+	if v.DurableExecutionName != nil {
+		s.WriteString(schemas.InvocationRequest_DurableExecutionName, *v.DurableExecutionName)
+	}
+	if v.FunctionName != nil {
+		s.WriteString(schemas.InvocationRequest_FunctionName, *v.FunctionName)
+	}
+	if v.InvocationType != "" {
+		s.WriteString(schemas.InvocationRequest_InvocationType, string(v.InvocationType))
+	}
+	if v.LogType != "" {
+		s.WriteString(schemas.InvocationRequest_LogType, string(v.LogType))
+	}
+	if v.Payload != nil {
+		s.WriteBlob(schemas.InvocationRequest_Payload, v.Payload)
+	}
+	if v.Qualifier != nil {
+		s.WriteString(schemas.InvocationRequest_Qualifier, *v.Qualifier)
+	}
+	if v.TenantId != nil {
+		s.WriteString(schemas.InvocationRequest_TenantId, *v.TenantId)
+	}
+}
+
 type InvokeOutput struct {
+
+	// The ARN of the durable execution that was started. This is returned when
+	// invoking a durable function and provides a unique identifier for tracking the
+	// execution.
+	DurableExecutionArn *string
 
 	// The version of the function that executed. When you invoke a function with an
 	// alias, this indicates which version the alias resolved to.
@@ -154,80 +210,76 @@ type InvokeOutput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *InvokeOutput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.InvocationResponse)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *InvokeOutput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.DurableExecutionArn != nil {
+		s.WriteString(schemas.InvocationResponse_DurableExecutionArn, *v.DurableExecutionArn)
+	}
+	if v.ExecutedVersion != nil {
+		s.WriteString(schemas.InvocationResponse_ExecutedVersion, *v.ExecutedVersion)
+	}
+	if v.FunctionError != nil {
+		s.WriteString(schemas.InvocationResponse_FunctionError, *v.FunctionError)
+	}
+	if v.LogResult != nil {
+		s.WriteString(schemas.InvocationResponse_LogResult, *v.LogResult)
+	}
+	if v.Payload != nil {
+		s.WriteBlob(schemas.InvocationResponse_Payload, v.Payload)
+	}
+	if v.StatusCode != 0 {
+		s.WriteInt32(schemas.InvocationResponse_StatusCode, v.StatusCode)
+	}
+}
+func (v *InvokeOutput) Deserialize(d smithy.ShapeDeserializer) error {
+	return smithy.ReadStruct(d, schemas.InvocationResponse, func(s *smithy.Schema) error {
+		switch s {
+		case schemas.InvocationResponse_DurableExecutionArn:
+			v.DurableExecutionArn = new(string)
+			return d.ReadString(schemas.InvocationResponse_DurableExecutionArn, v.DurableExecutionArn)
+		case schemas.InvocationResponse_ExecutedVersion:
+			v.ExecutedVersion = new(string)
+			return d.ReadString(schemas.InvocationResponse_ExecutedVersion, v.ExecutedVersion)
+		case schemas.InvocationResponse_FunctionError:
+			v.FunctionError = new(string)
+			return d.ReadString(schemas.InvocationResponse_FunctionError, v.FunctionError)
+		case schemas.InvocationResponse_LogResult:
+			v.LogResult = new(string)
+			return d.ReadString(schemas.InvocationResponse_LogResult, v.LogResult)
+		case schemas.InvocationResponse_Payload:
+			return d.ReadBlob(schemas.InvocationResponse_Payload, &v.Payload)
+		case schemas.InvocationResponse_StatusCode:
+			return d.ReadInt32(schemas.InvocationResponse_StatusCode, &v.StatusCode)
+		}
+		return nil
+	})
+}
 func (c *Client) addOperationInvokeMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.Invoke, schemas.InvocationRequest, schemas.InvocationResponse)}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsRestjson1_serializeOpInvoke{}, middleware.After)
-	if err != nil {
+	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.Invoke, schemas.InvocationRequest, schemas.InvocationResponse), output: &InvokeOutput{}}, middleware.After); err != nil {
 		return err
-	}
-	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpInvoke{}, middleware.After)
-	if err != nil {
-		return err
-	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "Invoke"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
-		return err
-	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpInvokeValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opInvoke(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -242,25 +294,8 @@ func (c *Client) addOperationInvokeMiddlewares(stack *middleware.Stack, options 
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opInvoke(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "Invoke",
-	}
 }

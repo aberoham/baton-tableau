@@ -4,11 +4,10 @@ package lambda
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/schemas"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"time"
 )
 
@@ -32,8 +31,8 @@ import (
 //
 // [Amazon DocumentDB]
 //
-// The following error handling options are available only for DynamoDB and
-// Kinesis event sources:
+// The following error handling options are available for stream sources
+// (DynamoDB, Kinesis, Amazon MSK, and self-managed Apache Kafka):
 //
 //   - BisectBatchOnFunctionError – If the function returns an error, split the
 //     batch in two and retry.
@@ -46,14 +45,13 @@ import (
 //     retries. The default value is infinite (-1). When set to infinite (-1), failed
 //     records are retried until the record expires.
 //
+//   - OnFailure – Send discarded records to an Amazon SQS queue, Amazon SNS topic,
+//     Kafka topic, or Amazon S3 bucket. For more information, see [Adding a destination].
+//
+// The following option is available only for DynamoDB and Kinesis event sources:
+//
 //   - ParallelizationFactor – Process multiple batches from each shard
 //     concurrently.
-//
-// For stream sources (DynamoDB, Kinesis, Amazon MSK, and self-managed Apache
-// Kafka), the following option is also available:
-//
-//   - DestinationConfig – Send discarded records to an Amazon SQS queue, Amazon
-//     SNS topic, or Amazon S3 bucket.
 //
 // For information about which configuration parameters apply to each event
 // source, see the following topics.
@@ -79,6 +77,7 @@ import (
 // [Amazon MQ and RabbitMQ]: https://docs.aws.amazon.com/lambda/latest/dg/with-mq.html#services-mq-params
 // [Apache Kafka]: https://docs.aws.amazon.com/lambda/latest/dg/with-kafka.html#services-kafka-parms
 // [Amazon DocumentDB]: https://docs.aws.amazon.com/lambda/latest/dg/with-documentdb.html#docdb-configuration
+// [Adding a destination]: https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-retain-records.html#invocation-async-destinations
 func (c *Client) UpdateEventSourceMapping(ctx context.Context, params *UpdateEventSourceMappingInput, optFns ...func(*Options)) (*UpdateEventSourceMappingOutput, error) {
 	if params == nil {
 		params = &UpdateEventSourceMappingInput{}
@@ -101,6 +100,10 @@ type UpdateEventSourceMappingInput struct {
 	// This member is required.
 	UUID *string
 
+	// Specific configuration settings for an Amazon Managed Streaming for Apache
+	// Kafka (Amazon MSK) event source.
+	AmazonManagedKafkaEventSourceConfig *types.AmazonManagedKafkaEventSourceConfig
+
 	// The maximum number of records in each batch that Lambda pulls from your stream
 	// or queue and sends to your function. Lambda passes all of the records in the
 	// batch to the function in a single call, up to the payload limit for synchronous
@@ -122,11 +125,11 @@ type UpdateEventSourceMappingInput struct {
 	//   - DocumentDB – Default 100. Max 10,000.
 	BatchSize *int32
 
-	// (Kinesis and DynamoDB Streams only) If the function returns an error, split the
-	// batch in two and retry.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) If the
+	// function returns an error, split the batch in two and retry.
 	BisectBatchOnFunctionError *bool
 
-	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Kafka only) A
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) A
 	// configuration object that specifies the destination of an event after Lambda
 	// processes it.
 	DestinationConfig *types.DestinationConfig
@@ -163,8 +166,8 @@ type UpdateEventSourceMappingInput struct {
 	// function name, it's limited to 64 characters in length.
 	FunctionName *string
 
-	// (Kinesis, DynamoDB Streams, and Amazon SQS) A list of current response type
-	// enums applied to the event source mapping.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, self-managed Apache Kafka, and Amazon
+	// SQS) A list of current response type enums applied to the event source mapping.
 	FunctionResponseTypes []types.FunctionResponseType
 
 	//  The ARN of the Key Management Service (KMS) customer managed key that Lambda
@@ -174,6 +177,11 @@ type UpdateEventSourceMappingInput struct {
 	//
 	// [filter criteria]: https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html#filtering-basics
 	KMSKeyArn *string
+
+	// (Amazon MSK, and self-managed Apache Kafka only) The logging configuration for
+	// your event source. Use this configuration object to define the level of logs for
+	// your event source mapping.
+	LoggingConfig *types.EventSourceMappingLoggingConfig
 
 	// The maximum amount of time, in seconds, that Lambda spends gathering records
 	// before invoking the function. You can configure MaximumBatchingWindowInSeconds
@@ -192,13 +200,14 @@ type UpdateEventSourceMappingInput struct {
 	// MaximumBatchingWindowInSeconds to at least 1.
 	MaximumBatchingWindowInSeconds *int32
 
-	// (Kinesis and DynamoDB Streams only) Discard records older than the specified
-	// age. The default value is infinite (-1).
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) Discard
+	// records older than the specified age. The default value is infinite (-1).
 	MaximumRecordAgeInSeconds *int32
 
-	// (Kinesis and DynamoDB Streams only) Discard records after the specified number
-	// of retries. The default value is infinite (-1). When set to infinite (-1),
-	// failed records are retried until the record expires.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) Discard
+	// records after the specified number of retries. The default value is infinite
+	// (-1). When set to infinite (-1), failed records are retried until the record
+	// expires.
 	MaximumRetryAttempts *int32
 
 	// The metrics configuration for your event source. For more information, see [Event source mapping metrics].
@@ -210,8 +219,8 @@ type UpdateEventSourceMappingInput struct {
 	// shard concurrently.
 	ParallelizationFactor *int32
 
-	// (Amazon MSK and self-managed Apache Kafka only) The provisioned mode
-	// configuration for the event source. For more information, see [provisioned mode].
+	// (Amazon SQS, Amazon MSK, and self-managed Apache Kafka only) The provisioned
+	// mode configuration for the event source. For more information, see [provisioned mode].
 	//
 	// [provisioned mode]: https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventsourcemapping.html#invocation-eventsourcemapping-provisioned-mode
 	ProvisionedPollerConfig *types.ProvisionedPollerConfig
@@ -221,6 +230,9 @@ type UpdateEventSourceMappingInput struct {
 	//
 	// [Configuring maximum concurrency for Amazon SQS event sources]: https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#events-sqs-max-concurrency
 	ScalingConfig *types.ScalingConfig
+
+	// Specific configuration settings for a self-managed Apache Kafka event source.
+	SelfManagedKafkaEventSourceConfig *types.SelfManagedKafkaEventSourceConfig
 
 	// An array of authentication protocols or VPC components required to secure your
 	// event source.
@@ -232,6 +244,95 @@ type UpdateEventSourceMappingInput struct {
 	TumblingWindowInSeconds *int32
 
 	noSmithyDocumentSerde
+}
+
+func (v *UpdateEventSourceMappingInput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.UpdateEventSourceMappingRequest)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *UpdateEventSourceMappingInput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.AmazonManagedKafkaEventSourceConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_AmazonManagedKafkaEventSourceConfig)
+		v.AmazonManagedKafkaEventSourceConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.BatchSize != nil {
+		s.WriteInt32(schemas.UpdateEventSourceMappingRequest_BatchSize, *v.BatchSize)
+	}
+	if v.BisectBatchOnFunctionError != nil {
+		s.WriteBool(schemas.UpdateEventSourceMappingRequest_BisectBatchOnFunctionError, *v.BisectBatchOnFunctionError)
+	}
+	if v.DestinationConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_DestinationConfig)
+		v.DestinationConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.DocumentDBEventSourceConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_DocumentDBEventSourceConfig)
+		v.DocumentDBEventSourceConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.Enabled != nil {
+		s.WriteBool(schemas.UpdateEventSourceMappingRequest_Enabled, *v.Enabled)
+	}
+	if v.FilterCriteria != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_FilterCriteria)
+		v.FilterCriteria.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.FunctionName != nil {
+		s.WriteString(schemas.UpdateEventSourceMappingRequest_FunctionName, *v.FunctionName)
+	}
+	serializeFunctionResponseTypeList(s, schemas.UpdateEventSourceMappingRequest_FunctionResponseTypes, v.FunctionResponseTypes)
+	if v.KMSKeyArn != nil {
+		s.WriteString(schemas.UpdateEventSourceMappingRequest_KMSKeyArn, *v.KMSKeyArn)
+	}
+	if v.LoggingConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_LoggingConfig)
+		v.LoggingConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.MaximumBatchingWindowInSeconds != nil {
+		s.WriteInt32(schemas.UpdateEventSourceMappingRequest_MaximumBatchingWindowInSeconds, *v.MaximumBatchingWindowInSeconds)
+	}
+	if v.MaximumRecordAgeInSeconds != nil {
+		s.WriteInt32(schemas.UpdateEventSourceMappingRequest_MaximumRecordAgeInSeconds, *v.MaximumRecordAgeInSeconds)
+	}
+	if v.MaximumRetryAttempts != nil {
+		s.WriteInt32(schemas.UpdateEventSourceMappingRequest_MaximumRetryAttempts, *v.MaximumRetryAttempts)
+	}
+	if v.MetricsConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_MetricsConfig)
+		v.MetricsConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.ParallelizationFactor != nil {
+		s.WriteInt32(schemas.UpdateEventSourceMappingRequest_ParallelizationFactor, *v.ParallelizationFactor)
+	}
+	if v.ProvisionedPollerConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_ProvisionedPollerConfig)
+		v.ProvisionedPollerConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.ScalingConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_ScalingConfig)
+		v.ScalingConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.SelfManagedKafkaEventSourceConfig != nil {
+		s.WriteStruct(schemas.UpdateEventSourceMappingRequest_SelfManagedKafkaEventSourceConfig)
+		v.SelfManagedKafkaEventSourceConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	serializeSourceAccessConfigurations(s, schemas.UpdateEventSourceMappingRequest_SourceAccessConfigurations, v.SourceAccessConfigurations)
+	if v.TumblingWindowInSeconds != nil {
+		s.WriteInt32(schemas.UpdateEventSourceMappingRequest_TumblingWindowInSeconds, *v.TumblingWindowInSeconds)
+	}
+	if v.UUID != nil {
+		s.WriteString(schemas.UpdateEventSourceMappingRequest_UUID, *v.UUID)
+	}
 }
 
 // A mapping between an Amazon Web Services resource and a Lambda function. For
@@ -254,13 +355,14 @@ type UpdateEventSourceMappingOutput struct {
 	// set MaximumBatchingWindowInSeconds to at least 1.
 	BatchSize *int32
 
-	// (Kinesis and DynamoDB Streams only) If the function returns an error, split the
-	// batch in two and retry. The default value is false.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) If the
+	// function returns an error, split the batch in two and retry. The default value
+	// is false.
 	BisectBatchOnFunctionError *bool
 
-	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka event
-	// sources only) A configuration object that specifies the destination of an event
-	// after Lambda processes it.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) A
+	// configuration object that specifies the destination of an event after Lambda
+	// processes it.
 	DestinationConfig *types.DestinationConfig
 
 	// Specific configuration settings for a DocumentDB event source.
@@ -290,8 +392,8 @@ type UpdateEventSourceMappingOutput struct {
 	// The ARN of the Lambda function.
 	FunctionArn *string
 
-	// (Kinesis, DynamoDB Streams, and Amazon SQS) A list of current response type
-	// enums applied to the event source mapping.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, self-managed Apache Kafka, and Amazon
+	// SQS) A list of current response type enums applied to the event source mapping.
 	FunctionResponseTypes []types.FunctionResponseType
 
 	//  The ARN of the Key Management Service (KMS) customer managed key that Lambda
@@ -304,8 +406,14 @@ type UpdateEventSourceMappingOutput struct {
 	// changed.
 	LastModified *time.Time
 
-	// The result of the last Lambda invocation of your function.
+	// The result of the event source mapping's last processing attempt.
 	LastProcessingResult *string
+
+	// (Amazon MSK, and self-managed Apache Kafka only) The logging configuration for
+	// your event source. For more information, see [Event source mapping logging].
+	//
+	// [Event source mapping logging]: https://docs.aws.amazon.com/lambda/latest/dg/esm-logging.html
+	LoggingConfig *types.EventSourceMappingLoggingConfig
 
 	// The maximum amount of time, in seconds, that Lambda spends gathering records
 	// before invoking the function. You can configure MaximumBatchingWindowInSeconds
@@ -323,19 +431,21 @@ type UpdateEventSourceMappingOutput struct {
 	// MaximumBatchingWindowInSeconds to at least 1.
 	MaximumBatchingWindowInSeconds *int32
 
-	// (Kinesis and DynamoDB Streams only) Discard records older than the specified
-	// age. The default value is -1, which sets the maximum age to infinite. When the
-	// value is set to infinite, Lambda never discards old records.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) Discard
+	// records older than the specified age. The default value is -1, which sets the
+	// maximum age to infinite. When the value is set to infinite, Lambda never
+	// discards old records.
 	//
 	// The minimum valid value for maximum record age is 60s. Although values less
 	// than 60 and greater than -1 fall within the parameter's absolute range, they are
 	// not allowed
 	MaximumRecordAgeInSeconds *int32
 
-	// (Kinesis and DynamoDB Streams only) Discard records after the specified number
-	// of retries. The default value is -1, which sets the maximum number of retries to
-	// infinite. When MaximumRetryAttempts is infinite, Lambda retries failed records
-	// until the record expires in the event source.
+	// (Kinesis, DynamoDB Streams, Amazon MSK, and self-managed Apache Kafka) Discard
+	// records after the specified number of retries. The default value is -1, which
+	// sets the maximum number of retries to infinite. When MaximumRetryAttempts is
+	// infinite, Lambda retries failed records until the record expires in the event
+	// source.
 	MaximumRetryAttempts *int32
 
 	// The metrics configuration for your event source. For more information, see [Event source mapping metrics].
@@ -347,8 +457,8 @@ type UpdateEventSourceMappingOutput struct {
 	// concurrently from each shard. The default value is 1.
 	ParallelizationFactor *int32
 
-	// (Amazon MSK and self-managed Apache Kafka only) The provisioned mode
-	// configuration for the event source. For more information, see [provisioned mode].
+	// (Amazon SQS, Amazon MSK, and self-managed Apache Kafka only) The provisioned
+	// mode configuration for the event source. For more information, see [provisioned mode].
 	//
 	// [provisioned mode]: https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventsourcemapping.html#invocation-eventsourcemapping-provisioned-mode
 	ProvisionedPollerConfig *types.ProvisionedPollerConfig
@@ -407,80 +517,254 @@ type UpdateEventSourceMappingOutput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *UpdateEventSourceMappingOutput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.EventSourceMappingConfiguration)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *UpdateEventSourceMappingOutput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.AmazonManagedKafkaEventSourceConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_AmazonManagedKafkaEventSourceConfig)
+		v.AmazonManagedKafkaEventSourceConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.BatchSize != nil {
+		s.WriteInt32(schemas.EventSourceMappingConfiguration_BatchSize, *v.BatchSize)
+	}
+	if v.BisectBatchOnFunctionError != nil {
+		s.WriteBool(schemas.EventSourceMappingConfiguration_BisectBatchOnFunctionError, *v.BisectBatchOnFunctionError)
+	}
+	if v.DestinationConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_DestinationConfig)
+		v.DestinationConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.DocumentDBEventSourceConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_DocumentDBEventSourceConfig)
+		v.DocumentDBEventSourceConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.EventSourceArn != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_EventSourceArn, *v.EventSourceArn)
+	}
+	if v.EventSourceMappingArn != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_EventSourceMappingArn, *v.EventSourceMappingArn)
+	}
+	if v.FilterCriteria != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_FilterCriteria)
+		v.FilterCriteria.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.FilterCriteriaError != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_FilterCriteriaError)
+		v.FilterCriteriaError.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.FunctionArn != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_FunctionArn, *v.FunctionArn)
+	}
+	serializeFunctionResponseTypeList(s, schemas.EventSourceMappingConfiguration_FunctionResponseTypes, v.FunctionResponseTypes)
+	if v.KMSKeyArn != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_KMSKeyArn, *v.KMSKeyArn)
+	}
+	if v.LastModified != nil {
+		s.WriteTime(schemas.EventSourceMappingConfiguration_LastModified, *v.LastModified)
+	}
+	if v.LastProcessingResult != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_LastProcessingResult, *v.LastProcessingResult)
+	}
+	if v.LoggingConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_LoggingConfig)
+		v.LoggingConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.MaximumBatchingWindowInSeconds != nil {
+		s.WriteInt32(schemas.EventSourceMappingConfiguration_MaximumBatchingWindowInSeconds, *v.MaximumBatchingWindowInSeconds)
+	}
+	if v.MaximumRecordAgeInSeconds != nil {
+		s.WriteInt32(schemas.EventSourceMappingConfiguration_MaximumRecordAgeInSeconds, *v.MaximumRecordAgeInSeconds)
+	}
+	if v.MaximumRetryAttempts != nil {
+		s.WriteInt32(schemas.EventSourceMappingConfiguration_MaximumRetryAttempts, *v.MaximumRetryAttempts)
+	}
+	if v.MetricsConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_MetricsConfig)
+		v.MetricsConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.ParallelizationFactor != nil {
+		s.WriteInt32(schemas.EventSourceMappingConfiguration_ParallelizationFactor, *v.ParallelizationFactor)
+	}
+	if v.ProvisionedPollerConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_ProvisionedPollerConfig)
+		v.ProvisionedPollerConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	serializeQueues(s, schemas.EventSourceMappingConfiguration_Queues, v.Queues)
+	if v.ScalingConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_ScalingConfig)
+		v.ScalingConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.SelfManagedEventSource != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_SelfManagedEventSource)
+		v.SelfManagedEventSource.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.SelfManagedKafkaEventSourceConfig != nil {
+		s.WriteStruct(schemas.EventSourceMappingConfiguration_SelfManagedKafkaEventSourceConfig)
+		v.SelfManagedKafkaEventSourceConfig.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	serializeSourceAccessConfigurations(s, schemas.EventSourceMappingConfiguration_SourceAccessConfigurations, v.SourceAccessConfigurations)
+	if v.StartingPosition != "" {
+		s.WriteString(schemas.EventSourceMappingConfiguration_StartingPosition, string(v.StartingPosition))
+	}
+	if v.StartingPositionTimestamp != nil {
+		s.WriteTime(schemas.EventSourceMappingConfiguration_StartingPositionTimestamp, *v.StartingPositionTimestamp)
+	}
+	if v.State != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_State, *v.State)
+	}
+	if v.StateTransitionReason != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_StateTransitionReason, *v.StateTransitionReason)
+	}
+	serializeTopics(s, schemas.EventSourceMappingConfiguration_Topics, v.Topics)
+	if v.TumblingWindowInSeconds != nil {
+		s.WriteInt32(schemas.EventSourceMappingConfiguration_TumblingWindowInSeconds, *v.TumblingWindowInSeconds)
+	}
+	if v.UUID != nil {
+		s.WriteString(schemas.EventSourceMappingConfiguration_UUID, *v.UUID)
+	}
+}
+func (v *UpdateEventSourceMappingOutput) Deserialize(d smithy.ShapeDeserializer) error {
+	return smithy.ReadStruct(d, schemas.EventSourceMappingConfiguration, func(s *smithy.Schema) error {
+		switch s {
+		case schemas.EventSourceMappingConfiguration_AmazonManagedKafkaEventSourceConfig:
+			v.AmazonManagedKafkaEventSourceConfig = &types.AmazonManagedKafkaEventSourceConfig{}
+			return v.AmazonManagedKafkaEventSourceConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_BatchSize:
+			v.BatchSize = new(int32)
+			return d.ReadInt32(schemas.EventSourceMappingConfiguration_BatchSize, v.BatchSize)
+		case schemas.EventSourceMappingConfiguration_BisectBatchOnFunctionError:
+			v.BisectBatchOnFunctionError = new(bool)
+			return d.ReadBool(schemas.EventSourceMappingConfiguration_BisectBatchOnFunctionError, v.BisectBatchOnFunctionError)
+		case schemas.EventSourceMappingConfiguration_DestinationConfig:
+			v.DestinationConfig = &types.DestinationConfig{}
+			return v.DestinationConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_DocumentDBEventSourceConfig:
+			v.DocumentDBEventSourceConfig = &types.DocumentDBEventSourceConfig{}
+			return v.DocumentDBEventSourceConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_EventSourceArn:
+			v.EventSourceArn = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_EventSourceArn, v.EventSourceArn)
+		case schemas.EventSourceMappingConfiguration_EventSourceMappingArn:
+			v.EventSourceMappingArn = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_EventSourceMappingArn, v.EventSourceMappingArn)
+		case schemas.EventSourceMappingConfiguration_FilterCriteria:
+			v.FilterCriteria = &types.FilterCriteria{}
+			return v.FilterCriteria.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_FilterCriteriaError:
+			v.FilterCriteriaError = &types.FilterCriteriaError{}
+			return v.FilterCriteriaError.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_FunctionArn:
+			v.FunctionArn = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_FunctionArn, v.FunctionArn)
+		case schemas.EventSourceMappingConfiguration_FunctionResponseTypes:
+			return deserializeFunctionResponseTypeList(d, schemas.EventSourceMappingConfiguration_FunctionResponseTypes, &v.FunctionResponseTypes)
+		case schemas.EventSourceMappingConfiguration_KMSKeyArn:
+			v.KMSKeyArn = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_KMSKeyArn, v.KMSKeyArn)
+		case schemas.EventSourceMappingConfiguration_LastModified:
+			v.LastModified = new(time.Time)
+			return d.ReadTime(schemas.EventSourceMappingConfiguration_LastModified, v.LastModified)
+		case schemas.EventSourceMappingConfiguration_LastProcessingResult:
+			v.LastProcessingResult = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_LastProcessingResult, v.LastProcessingResult)
+		case schemas.EventSourceMappingConfiguration_LoggingConfig:
+			v.LoggingConfig = &types.EventSourceMappingLoggingConfig{}
+			return v.LoggingConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_MaximumBatchingWindowInSeconds:
+			v.MaximumBatchingWindowInSeconds = new(int32)
+			return d.ReadInt32(schemas.EventSourceMappingConfiguration_MaximumBatchingWindowInSeconds, v.MaximumBatchingWindowInSeconds)
+		case schemas.EventSourceMappingConfiguration_MaximumRecordAgeInSeconds:
+			v.MaximumRecordAgeInSeconds = new(int32)
+			return d.ReadInt32(schemas.EventSourceMappingConfiguration_MaximumRecordAgeInSeconds, v.MaximumRecordAgeInSeconds)
+		case schemas.EventSourceMappingConfiguration_MaximumRetryAttempts:
+			v.MaximumRetryAttempts = new(int32)
+			return d.ReadInt32(schemas.EventSourceMappingConfiguration_MaximumRetryAttempts, v.MaximumRetryAttempts)
+		case schemas.EventSourceMappingConfiguration_MetricsConfig:
+			v.MetricsConfig = &types.EventSourceMappingMetricsConfig{}
+			return v.MetricsConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_ParallelizationFactor:
+			v.ParallelizationFactor = new(int32)
+			return d.ReadInt32(schemas.EventSourceMappingConfiguration_ParallelizationFactor, v.ParallelizationFactor)
+		case schemas.EventSourceMappingConfiguration_ProvisionedPollerConfig:
+			v.ProvisionedPollerConfig = &types.ProvisionedPollerConfig{}
+			return v.ProvisionedPollerConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_Queues:
+			return deserializeQueues(d, schemas.EventSourceMappingConfiguration_Queues, &v.Queues)
+		case schemas.EventSourceMappingConfiguration_ScalingConfig:
+			v.ScalingConfig = &types.ScalingConfig{}
+			return v.ScalingConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_SelfManagedEventSource:
+			v.SelfManagedEventSource = &types.SelfManagedEventSource{}
+			return v.SelfManagedEventSource.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_SelfManagedKafkaEventSourceConfig:
+			v.SelfManagedKafkaEventSourceConfig = &types.SelfManagedKafkaEventSourceConfig{}
+			return v.SelfManagedKafkaEventSourceConfig.Deserialize(d)
+		case schemas.EventSourceMappingConfiguration_SourceAccessConfigurations:
+			return deserializeSourceAccessConfigurations(d, schemas.EventSourceMappingConfiguration_SourceAccessConfigurations, &v.SourceAccessConfigurations)
+		case schemas.EventSourceMappingConfiguration_StartingPosition:
+			var ev string
+			if err := d.ReadString(schemas.EventSourceMappingConfiguration_StartingPosition, &ev); err != nil {
+				return err
+			}
+			v.StartingPosition = types.EventSourcePosition(ev)
+			return nil
+		case schemas.EventSourceMappingConfiguration_StartingPositionTimestamp:
+			v.StartingPositionTimestamp = new(time.Time)
+			return d.ReadTime(schemas.EventSourceMappingConfiguration_StartingPositionTimestamp, v.StartingPositionTimestamp)
+		case schemas.EventSourceMappingConfiguration_State:
+			v.State = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_State, v.State)
+		case schemas.EventSourceMappingConfiguration_StateTransitionReason:
+			v.StateTransitionReason = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_StateTransitionReason, v.StateTransitionReason)
+		case schemas.EventSourceMappingConfiguration_Topics:
+			return deserializeTopics(d, schemas.EventSourceMappingConfiguration_Topics, &v.Topics)
+		case schemas.EventSourceMappingConfiguration_TumblingWindowInSeconds:
+			v.TumblingWindowInSeconds = new(int32)
+			return d.ReadInt32(schemas.EventSourceMappingConfiguration_TumblingWindowInSeconds, v.TumblingWindowInSeconds)
+		case schemas.EventSourceMappingConfiguration_UUID:
+			v.UUID = new(string)
+			return d.ReadString(schemas.EventSourceMappingConfiguration_UUID, v.UUID)
+		}
+		return nil
+	})
+}
 func (c *Client) addOperationUpdateEventSourceMappingMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.UpdateEventSourceMapping, schemas.UpdateEventSourceMappingRequest, schemas.EventSourceMappingConfiguration)}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsRestjson1_serializeOpUpdateEventSourceMapping{}, middleware.After)
-	if err != nil {
+	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.UpdateEventSourceMapping, schemas.UpdateEventSourceMappingRequest, schemas.EventSourceMappingConfiguration), output: &UpdateEventSourceMappingOutput{}}, middleware.After); err != nil {
 		return err
-	}
-	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpUpdateEventSourceMapping{}, middleware.After)
-	if err != nil {
-		return err
-	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "UpdateEventSourceMapping"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
-		return err
-	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpUpdateEventSourceMappingValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opUpdateEventSourceMapping(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -495,25 +779,8 @@ func (c *Client) addOperationUpdateEventSourceMappingMiddlewares(stack *middlewa
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opUpdateEventSourceMapping(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "UpdateEventSourceMapping",
-	}
 }

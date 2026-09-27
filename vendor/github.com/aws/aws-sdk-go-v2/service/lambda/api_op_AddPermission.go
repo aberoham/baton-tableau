@@ -4,11 +4,10 @@ package lambda
 
 import (
 	"context"
-	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/schemas"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // Grants a [principal] permission to use a function. You can apply the policy at the
@@ -91,10 +90,14 @@ type AddPermissionInput struct {
 	// The type of authentication that your function URL uses. Set to AWS_IAM if you
 	// want to restrict access to authenticated users only. Set to NONE if you want to
 	// bypass IAM authentication to create a public endpoint. For more information, see
-	// [Security and auth model for Lambda function URLs].
+	// [Control access to Lambda function URLs].
 	//
-	// [Security and auth model for Lambda function URLs]: https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html
+	// [Control access to Lambda function URLs]: https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html
 	FunctionUrlAuthType types.FunctionUrlAuthType
+
+	// Indicates whether the permission applies when the function is invoked through a
+	// function URL.
+	InvokedViaFunctionUrl *bool
 
 	// The identifier for your organization in Organizations. Use this to grant
 	// permissions to all the Amazon Web Services accounts under this organization.
@@ -123,6 +126,51 @@ type AddPermissionInput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *AddPermissionInput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.AddPermissionRequest)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *AddPermissionInput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.Action != nil {
+		s.WriteString(schemas.AddPermissionRequest_Action, *v.Action)
+	}
+	if v.EventSourceToken != nil {
+		s.WriteString(schemas.AddPermissionRequest_EventSourceToken, *v.EventSourceToken)
+	}
+	if v.FunctionName != nil {
+		s.WriteString(schemas.AddPermissionRequest_FunctionName, *v.FunctionName)
+	}
+	if v.FunctionUrlAuthType != "" {
+		s.WriteString(schemas.AddPermissionRequest_FunctionUrlAuthType, string(v.FunctionUrlAuthType))
+	}
+	if v.InvokedViaFunctionUrl != nil {
+		s.WriteBool(schemas.AddPermissionRequest_InvokedViaFunctionUrl, *v.InvokedViaFunctionUrl)
+	}
+	if v.Principal != nil {
+		s.WriteString(schemas.AddPermissionRequest_Principal, *v.Principal)
+	}
+	if v.PrincipalOrgID != nil {
+		s.WriteString(schemas.AddPermissionRequest_PrincipalOrgID, *v.PrincipalOrgID)
+	}
+	if v.Qualifier != nil {
+		s.WriteString(schemas.AddPermissionRequest_Qualifier, *v.Qualifier)
+	}
+	if v.RevisionId != nil {
+		s.WriteString(schemas.AddPermissionRequest_RevisionId, *v.RevisionId)
+	}
+	if v.SourceAccount != nil {
+		s.WriteString(schemas.AddPermissionRequest_SourceAccount, *v.SourceAccount)
+	}
+	if v.SourceArn != nil {
+		s.WriteString(schemas.AddPermissionRequest_SourceArn, *v.SourceArn)
+	}
+	if v.StatementId != nil {
+		s.WriteString(schemas.AddPermissionRequest_StatementId, *v.StatementId)
+	}
+}
+
 type AddPermissionOutput struct {
 
 	// The permission statement that's added to the function policy.
@@ -134,80 +182,48 @@ type AddPermissionOutput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *AddPermissionOutput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.AddPermissionResponse)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *AddPermissionOutput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.Statement != nil {
+		s.WriteString(schemas.AddPermissionResponse_Statement, *v.Statement)
+	}
+}
+func (v *AddPermissionOutput) Deserialize(d smithy.ShapeDeserializer) error {
+	return smithy.ReadStruct(d, schemas.AddPermissionResponse, func(s *smithy.Schema) error {
+		switch s {
+		case schemas.AddPermissionResponse_Statement:
+			v.Statement = new(string)
+			return d.ReadString(schemas.AddPermissionResponse_Statement, v.Statement)
+		}
+		return nil
+	})
+}
 func (c *Client) addOperationAddPermissionMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.AddPermission, schemas.AddPermissionRequest, schemas.AddPermissionResponse)}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsRestjson1_serializeOpAddPermission{}, middleware.After)
-	if err != nil {
+	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.AddPermission, schemas.AddPermissionRequest, schemas.AddPermissionResponse), output: &AddPermissionOutput{}}, middleware.After); err != nil {
 		return err
-	}
-	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpAddPermission{}, middleware.After)
-	if err != nil {
-		return err
-	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "AddPermission"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
-		return err
-	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpAddPermissionValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opAddPermission(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -222,25 +238,8 @@ func (c *Client) addOperationAddPermissionMiddlewares(stack *middleware.Stack, o
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
-}
-
-func newServiceMetadataMiddleware_opAddPermission(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "AddPermission",
-	}
 }
