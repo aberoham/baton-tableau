@@ -6,11 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/schemas"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithytime "github.com/aws/smithy-go/time"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	smithywaiter "github.com/aws/smithy-go/waiter"
 	"time"
 )
@@ -59,6 +59,21 @@ type GetFunctionInput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *GetFunctionInput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.GetFunctionRequest)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *GetFunctionInput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.FunctionName != nil {
+		s.WriteString(schemas.GetFunctionRequest_FunctionName, *v.FunctionName)
+	}
+	if v.Qualifier != nil {
+		s.WriteString(schemas.GetFunctionRequest_Qualifier, *v.Qualifier)
+	}
+}
+
 type GetFunctionOutput struct {
 
 	// The deployment package of the function or version.
@@ -88,80 +103,77 @@ type GetFunctionOutput struct {
 	noSmithyDocumentSerde
 }
 
+func (v *GetFunctionOutput) Serialize(s smithy.ShapeSerializer) {
+	s.WriteStruct(schemas.GetFunctionResponse)
+	v.SerializeMembers(s)
+	s.CloseStruct()
+}
+
+func (v *GetFunctionOutput) SerializeMembers(s smithy.ShapeSerializer) {
+	if v.Code != nil {
+		s.WriteStruct(schemas.GetFunctionResponse_Code)
+		v.Code.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.Concurrency != nil {
+		s.WriteStruct(schemas.GetFunctionResponse_Concurrency)
+		v.Concurrency.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	if v.Configuration != nil {
+		s.WriteStruct(schemas.GetFunctionResponse_Configuration)
+		v.Configuration.SerializeMembers(s)
+		s.CloseStruct()
+	}
+	serializeTags(s, schemas.GetFunctionResponse_Tags, v.Tags)
+	if v.TagsError != nil {
+		s.WriteStruct(schemas.GetFunctionResponse_TagsError)
+		v.TagsError.SerializeMembers(s)
+		s.CloseStruct()
+	}
+}
+func (v *GetFunctionOutput) Deserialize(d smithy.ShapeDeserializer) error {
+	return smithy.ReadStruct(d, schemas.GetFunctionResponse, func(s *smithy.Schema) error {
+		switch s {
+		case schemas.GetFunctionResponse_Code:
+			v.Code = &types.FunctionCodeLocation{}
+			return v.Code.Deserialize(d)
+		case schemas.GetFunctionResponse_Concurrency:
+			v.Concurrency = &types.Concurrency{}
+			return v.Concurrency.Deserialize(d)
+		case schemas.GetFunctionResponse_Configuration:
+			v.Configuration = &types.FunctionConfiguration{}
+			return v.Configuration.Deserialize(d)
+		case schemas.GetFunctionResponse_Tags:
+			return deserializeTags(d, schemas.GetFunctionResponse_Tags, &v.Tags)
+		case schemas.GetFunctionResponse_TagsError:
+			v.TagsError = &types.TagsError{}
+			return v.TagsError.Deserialize(d)
+		}
+		return nil
+	})
+}
 func (c *Client) addOperationGetFunctionMiddlewares(stack *middleware.Stack, options Options) (err error) {
-	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
+	if err := stack.Serialize.Add(&serializeRequestMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.GetFunction, schemas.GetFunctionRequest, schemas.GetFunctionResponse)}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsRestjson1_serializeOpGetFunction{}, middleware.After)
-	if err != nil {
+	if err := stack.Deserialize.Add(&deserializeResponseMiddleware{options: &options, operationSchema: smithy.NewOperationSchema(schemas.GetFunction, schemas.GetFunctionRequest, schemas.GetFunctionResponse), output: &GetFunctionOutput{}}, middleware.After); err != nil {
 		return err
-	}
-	err = stack.Deserialize.Add(&awsRestjson1_deserializeOpGetFunction{}, middleware.After)
-	if err != nil {
-		return err
-	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "GetFunction"); err != nil {
-		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
-	if err = addlegacyEndpointContextSetter(stack, options); err != nil {
-		return err
-	}
-	if err = addSetLoggerMiddleware(stack, options); err != nil {
-		return err
-	}
-	if err = addClientRequestID(stack); err != nil {
-		return err
-	}
-	if err = addComputeContentLength(stack); err != nil {
-		return err
-	}
 	if err = addResolveEndpointMiddleware(stack, options); err != nil {
 		return err
 	}
 	if err = addComputePayloadSHA256(stack); err != nil {
 		return err
 	}
-	if err = addRetry(stack, options); err != nil {
-		return err
-	}
-	if err = addRawResponseToMetadata(stack); err != nil {
-		return err
-	}
-	if err = addRecordResponseTiming(stack); err != nil {
-		return err
-	}
-	if err = addSpanRetryLoop(stack, options); err != nil {
-		return err
-	}
-	if err = addClientUserAgent(stack, options); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddErrorCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = smithyhttp.AddCloseResponseBodyMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addSetLegacyContextSigningOptionsMiddleware(stack); err != nil {
-		return err
-	}
-	if err = addTimeOffsetBuild(stack, c); err != nil {
-		return err
-	}
-	if err = addUserAgentRetryMode(stack, options); err != nil {
+	if err = addRecordResponseTiming(stack, options); err != nil {
 		return err
 	}
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
 	if err = addOpGetFunctionValidationMiddleware(stack); err != nil {
-		return err
-	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opGetFunction(options.Region), middleware.Before); err != nil {
-		return err
-	}
-	if err = addRecursionDetection(stack); err != nil {
 		return err
 	}
 	if err = addRequestIDRetrieverMiddleware(stack); err != nil {
@@ -176,16 +188,7 @@ func (c *Client) addOperationGetFunctionMiddlewares(stack *middleware.Stack, opt
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanInitializeEnd(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil
@@ -214,7 +217,7 @@ type FunctionActiveV2WaiterOptions struct {
 	MinDelay time.Duration
 
 	// MaxDelay is the maximum amount of time to delay between retries. If unset or
-	// set to zero, FunctionActiveV2Waiter will use default max delay of 120 seconds.
+	// set to zero, FunctionActiveV2Waiter will use default max delay of 300 seconds.
 	// Note that MaxDelay must resolve to value greater than or equal to the MinDelay.
 	MaxDelay time.Duration
 
@@ -244,7 +247,7 @@ type FunctionActiveV2Waiter struct {
 func NewFunctionActiveV2Waiter(client GetFunctionAPIClient, optFns ...func(*FunctionActiveV2WaiterOptions)) *FunctionActiveV2Waiter {
 	options := FunctionActiveV2WaiterOptions{}
 	options.MinDelay = 1 * time.Second
-	options.MaxDelay = 120 * time.Second
+	options.MaxDelay = 300 * time.Second
 	options.Retryable = functionActiveV2StateRetryable
 
 	for _, fn := range optFns {
@@ -279,7 +282,7 @@ func (w *FunctionActiveV2Waiter) WaitForOutput(ctx context.Context, params *GetF
 	}
 
 	if options.MaxDelay <= 0 {
-		options.MaxDelay = 120 * time.Second
+		options.MaxDelay = 300 * time.Second
 	}
 
 	if options.MinDelay > options.MaxDelay {
@@ -424,8 +427,8 @@ type FunctionExistsWaiterOptions struct {
 	MinDelay time.Duration
 
 	// MaxDelay is the maximum amount of time to delay between retries. If unset or
-	// set to zero, FunctionExistsWaiter will use default max delay of 120 seconds.
-	// Note that MaxDelay must resolve to value greater than or equal to the MinDelay.
+	// set to zero, FunctionExistsWaiter will use default max delay of 20 seconds. Note
+	// that MaxDelay must resolve to value greater than or equal to the MinDelay.
 	MaxDelay time.Duration
 
 	// LogWaitAttempts is used to enable logging for waiter retry attempts
@@ -454,7 +457,7 @@ type FunctionExistsWaiter struct {
 func NewFunctionExistsWaiter(client GetFunctionAPIClient, optFns ...func(*FunctionExistsWaiterOptions)) *FunctionExistsWaiter {
 	options := FunctionExistsWaiterOptions{}
 	options.MinDelay = 1 * time.Second
-	options.MaxDelay = 120 * time.Second
+	options.MaxDelay = 20 * time.Second
 	options.Retryable = functionExistsStateRetryable
 
 	for _, fn := range optFns {
@@ -489,7 +492,7 @@ func (w *FunctionExistsWaiter) WaitForOutput(ctx context.Context, params *GetFun
 	}
 
 	if options.MaxDelay <= 0 {
-		options.MaxDelay = 120 * time.Second
+		options.MaxDelay = 20 * time.Second
 	}
 
 	if options.MinDelay > options.MaxDelay {
@@ -600,7 +603,7 @@ type FunctionUpdatedV2WaiterOptions struct {
 	MinDelay time.Duration
 
 	// MaxDelay is the maximum amount of time to delay between retries. If unset or
-	// set to zero, FunctionUpdatedV2Waiter will use default max delay of 120 seconds.
+	// set to zero, FunctionUpdatedV2Waiter will use default max delay of 300 seconds.
 	// Note that MaxDelay must resolve to value greater than or equal to the MinDelay.
 	MaxDelay time.Duration
 
@@ -630,7 +633,7 @@ type FunctionUpdatedV2Waiter struct {
 func NewFunctionUpdatedV2Waiter(client GetFunctionAPIClient, optFns ...func(*FunctionUpdatedV2WaiterOptions)) *FunctionUpdatedV2Waiter {
 	options := FunctionUpdatedV2WaiterOptions{}
 	options.MinDelay = 1 * time.Second
-	options.MaxDelay = 120 * time.Second
+	options.MaxDelay = 300 * time.Second
 	options.Retryable = functionUpdatedV2StateRetryable
 
 	for _, fn := range optFns {
@@ -665,7 +668,7 @@ func (w *FunctionUpdatedV2Waiter) WaitForOutput(ctx context.Context, params *Get
 	}
 
 	if options.MaxDelay <= 0 {
-		options.MaxDelay = 120 * time.Second
+		options.MaxDelay = 300 * time.Second
 	}
 
 	if options.MinDelay > options.MaxDelay {
@@ -793,11 +796,3 @@ type GetFunctionAPIClient interface {
 }
 
 var _ GetFunctionAPIClient = (*Client)(nil)
-
-func newServiceMetadataMiddleware_opGetFunction(region string) *awsmiddleware.RegisterServiceMetadata {
-	return &awsmiddleware.RegisterServiceMetadata{
-		Region:        region,
-		ServiceID:     ServiceID,
-		OperationName: "GetFunction",
-	}
-}
